@@ -1,0 +1,9 @@
+# Deployed Michelson swap contract (v2 - fixed for fractional XTZ)
+# Address: KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt
+#
+# This is the actual contract deployed on Shadownet.
+# The SmartPy version (test_swap.py) is for reference/redeployment.
+
+parameter (or (unit %swap) (or (nat %update_rate) (unit %withdraw)));
+storage (pair (address %admin) (pair (address %test_token) (nat %rate)));
+code { UNPAIR; IF_LEFT { DROP; DUP; CDR; CDR; AMOUNT; PUSH mutez 1; SWAP; EDIV; IF_NONE { PUSH string "DIV_ERROR"; FAILWITH } { CAR }; MUL; PUSH nat 1000000; SWAP; EDIV; IF_NONE { PUSH string "DIV_ERROR2"; FAILWITH } { CAR }; DUP 2; CDR; CAR; CONTRACT %transfer (list (pair address (list (pair address nat nat)))); IF_NONE { PUSH string "BAD_TOKEN"; FAILWITH } {}; PUSH mutez 0; NIL (pair address (list (pair address nat nat))); NIL (pair address nat nat); DIG 4; PUSH nat 0; SENDER; PAIR 3; CONS; SELF_ADDRESS; PAIR; CONS; TRANSFER_TOKENS; NIL operation; SWAP; CONS; PAIR } { IF_LEFT { DUP 2; CAR; SENDER; COMPARE; EQ; IF {} { PUSH string "NOT_ADMIN"; FAILWITH }; DIP { DUP; CAR; SWAP; CDR; CAR }; SWAP; PAIR; SWAP; PAIR; NIL operation; PAIR } { DROP; DUP; CAR; SENDER; COMPARE; EQ; IF {} { PUSH string "NOT_ADMIN"; FAILWITH }; DUP; CAR; CONTRACT unit; IF_NONE { PUSH string "BAD_ADMIN"; FAILWITH } {}; BALANCE; UNIT; TRANSFER_TOKENS; NIL operation; SWAP; CONS; PAIR } } }
