@@ -92,16 +92,20 @@ Balances stored in big map **1278**. Query via RPC or indexer.
 The test suite covers the three main x402 scenarios. Run with SmartPy CLI or the online IDE:
 
 ```bash
-# Install SmartPy CLI (if not installed)
-curl -s https://smartpy.io/cli/install.sh | bash
+# Install SmartPy (requires Python virtual environment)
+python3 -m venv ~/smartpy-venv
+source ~/smartpy-venv/bin/activate
+pip install smartpy-tezos
 
 # Run all scenario tests
-~/smartpy-cli/SmartPy.sh test contracts/test_scenarios.py output/
+python contracts/test_scenarios.py
 
 # Run individual contract tests
-~/smartpy-cli/SmartPy.sh test contracts/test_swap.py output/
-~/smartpy-cli/SmartPy.sh test contracts/test_token_fa2.py output/
+python contracts/test_swap.py
+python contracts/test_token_fa2.py
 ```
+
+Test output will be generated in a directory alongside the script.
 
 Or paste the contract code into the [SmartPy online IDE](https://smartpy.io/).
 

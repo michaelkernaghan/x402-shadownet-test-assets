@@ -9,24 +9,31 @@
 import smartpy as sp
 from smartpy.templates import fa2_lib as fa2
 
+# Main template for FA2 contracts
+main = fa2.main
+
 
 @sp.module
-def tokens():
-    """FA2 Fungible Token for testing"""
+def token_module():
+    import main
 
     class TestToken(
-        fa2.Admin,
-        fa2.MintFungible,
-        fa2.BurnFungible,
-        fa2.Fa2Fungible,
+        main.Admin,
+        main.Fungible,
+        main.MintFungible,
+        main.BurnFungible,
+        main.OnchainviewBalanceOf,
     ):
-        def __init__(self, admin, metadata):
-            fa2.Fa2Fungible.__init__(self, metadata)
-            fa2.Admin.__init__(self, admin)
+        def __init__(self, admin_address, contract_metadata, ledger, token_metadata):
+            main.OnchainviewBalanceOf.__init__(self)
+            main.BurnFungible.__init__(self)
+            main.MintFungible.__init__(self)
+            main.Fungible.__init__(self, contract_metadata, ledger, token_metadata)
+            main.Admin.__init__(self, admin_address)
 
 
 @sp.module
-def swap():
+def swap_module():
     """Swap contract for XTZ -> TEST"""
 
     class TestSwap(sp.Contract):
@@ -42,27 +49,30 @@ def swap():
             assert not self.data.paused, "Swap is paused"
             assert sp.amount > sp.mutez(0), "Must send XTZ"
 
-            xtz_amount = sp.split_tokens(sp.amount, 1, 1000000)
-            test_amount = sp.mul(xtz_amount, self.data.rate)
+            # Convert mutez to nat (1 XTZ = 1,000,000 mutez)
+            # For rate of 1000: 100,000 mutez (0.1 XTZ) * 1000 / 1,000,000 = 100 TEST
+            xtz_in_mutez = sp.fst(sp.ediv(sp.amount, sp.mutez(1)).unwrap_some())
+            test_amount = sp.fst(sp.ediv(xtz_in_mutez * self.data.rate, sp.nat(1000000)).unwrap_some())
 
-            transfer_param = sp.list([
+            transfer_param = [
                 sp.record(
-                    from_=sp.self_address(),
-                    txs=sp.list([
+                    from_=sp.self_address,
+                    txs=[
                         sp.record(
                             to_=sp.sender,
                             token_id=sp.nat(0),
                             amount=test_amount
                         )
-                    ])
+                    ]
                 )
-            ])
+            ]
 
+            # FA2 transfer type with correct layout (to_, (token_id, amount))
             token_contract = sp.contract(
                 sp.list[sp.record(
                     from_=sp.address,
-                    txs=sp.list[sp.record(to_=sp.address, token_id=sp.nat, amount=sp.nat)]
-                )],
+                    txs=sp.list[sp.record(to_=sp.address, token_id=sp.nat, amount=sp.nat).layout(("to_", ("token_id", "amount")))]
+                ).layout(("from_", "txs"))],
                 self.data.test_token,
                 entrypoint="transfer"
             ).unwrap_some(error="Invalid token contract")
@@ -74,6 +84,11 @@ def swap():
         def pause(self, paused):
             assert sp.sender == self.data.admin, "Not admin"
             self.data.paused = paused
+
+
+def _get_balance(fa2_contract, args):
+    """Utility function to call the contract's get_balance view."""
+    return sp.View(fa2_contract, "get_balance")(args)
 
 
 # Test scenarios
@@ -88,30 +103,34 @@ if "main" in __name__:
         - Transfer TEST tokens to payee
         - Success
         """
-        sc = sp.test_scenario("Scenario 1: Happy Path", [fa2, tokens])
+        sc = sp.test_scenario("Scenario 1: Happy Path")
+        sc.h1("Scenario 1: Happy Path - Direct FA2 Payment")
 
         # Accounts
         admin = sp.test_account("admin")
-        payer = sp.test_account("payer")  # AI agent wallet
-        payee = sp.test_account("payee")  # x402 merchant
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        # Token metadata
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
 
         # Deploy TEST token
-        metadata = sp.scenario_utils.metadata_of_url("ipfs://test")
-        test_token = tokens.TestToken(admin=admin.address, metadata=metadata)
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
         sc += test_token
 
-        # Mint TEST tokens to payer (simulating pre-funded wallet)
+        # Mint TEST tokens to payer
         test_token.mint(
-            [sp.record(
-                to_=payer.address,
-                token=sp.variant.new(sp.record(metadata={"": sp.bytes("0x00")}, token_id=0)),
-                amount=1000
-            )],
+            [sp.record(to_=payer.address, amount=1000, token=sp.variant("new", tok0_md))],
             _sender=admin
         )
 
         # Verify payer has tokens
-        sc.verify(test_token.data.ledger[sp.record(owner=payer.address, token_id=0)] == 1000)
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 1000)
 
         # x402 payment: Transfer 100 TEST to payee
         test_token.transfer(
@@ -123,8 +142,8 @@ if "main" in __name__:
         )
 
         # Verify payment succeeded
-        sc.verify(test_token.data.ledger[sp.record(owner=payer.address, token_id=0)] == 900)
-        sc.verify(test_token.data.ledger[sp.record(owner=payee.address, token_id=0)] == 100)
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 900)
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
 
         sc.h2("Result: Payment successful")
 
@@ -137,37 +156,46 @@ if "main" in __name__:
         - Wallet tries to pay with WRONG token
         - Payment rejected (payee doesn't accept WRONG)
         """
-        sc = sp.test_scenario("Scenario 2: Wrong Token", [fa2, tokens])
+        sc = sp.test_scenario("Scenario 2: Wrong Token")
+        sc.h1("Scenario 2: Wrong Token - Payment Rejected")
 
         # Accounts
         admin = sp.test_account("admin")
         payer = sp.test_account("payer")
         payee = sp.test_account("payee")
 
-        metadata = sp.scenario_utils.metadata_of_url("ipfs://test")
+        # Token metadata
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+        wrong_md = fa2.make_metadata(name="WRONG", decimals=0, symbol="WRONG")
 
         # Deploy TEST token (what payee wants)
-        test_token = tokens.TestToken(admin=admin.address, metadata=metadata)
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
         sc += test_token
 
         # Deploy WRONG token (what payer has)
-        wrong_token = tokens.TestToken(admin=admin.address, metadata=metadata)
+        wrong_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
         sc += wrong_token
 
         # Mint WRONG tokens to payer (but no TEST tokens)
         wrong_token.mint(
-            [sp.record(
-                to_=payer.address,
-                token=sp.variant.new(sp.record(metadata={"": sp.bytes("0x00")}, token_id=0)),
-                amount=1000
-            )],
+            [sp.record(to_=payer.address, amount=1000, token=sp.variant("new", wrong_md))],
             _sender=admin
         )
 
         # Payer has WRONG tokens but no TEST tokens
-        sc.verify(wrong_token.data.ledger[sp.record(owner=payer.address, token_id=0)] == 1000)
+        sc.verify(_get_balance(wrong_token, sp.record(owner=payer.address, token_id=0)) == 1000)
 
-        # Try to transfer TEST tokens - should fail (insufficient balance)
+        # Try to transfer TEST tokens - should fail (token doesn't exist)
         test_token.transfer(
             [sp.record(
                 from_=payer.address,
@@ -175,7 +203,7 @@ if "main" in __name__:
             )],
             _sender=payer,
             _valid=False,
-            _exception="FA2_INSUFFICIENT_BALANCE"
+            _exception="FA2_TOKEN_UNDEFINED"
         )
 
         sc.h2("Result: Payment rejected - wrong token")
@@ -191,21 +219,28 @@ if "main" in __name__:
         - Pay with TEST tokens
         - Success
         """
-        sc = sp.test_scenario("Scenario 3: Swap Flow", [fa2, tokens, swap])
+        sc = sp.test_scenario("Scenario 3: Swap Flow")
+        sc.h1("Scenario 3: Swap Flow - XTZ to TEST to Payment")
 
         # Accounts
         admin = sp.test_account("admin")
         payer = sp.test_account("payer")
         payee = sp.test_account("payee")
 
-        metadata = sp.scenario_utils.metadata_of_url("ipfs://test")
+        # Token metadata
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
 
         # Deploy TEST token
-        test_token = tokens.TestToken(admin=admin.address, metadata=metadata)
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
         sc += test_token
 
         # Deploy swap contract (1 XTZ = 1000 TEST)
-        swap_contract = swap.TestSwap(
+        swap_contract = swap_module.TestSwap(
             admin=admin.address,
             test_token_address=test_token.address,
             rate=sp.nat(1000)
@@ -214,22 +249,18 @@ if "main" in __name__:
 
         # Fund swap contract with TEST tokens
         test_token.mint(
-            [sp.record(
-                to_=swap_contract.address,
-                token=sp.variant.new(sp.record(metadata={"": sp.bytes("0x00")}, token_id=0)),
-                amount=100000
-            )],
+            [sp.record(to_=swap_contract.address, amount=100000, token=sp.variant("new", tok0_md))],
             _sender=admin
         )
 
         # Verify swap contract has liquidity
-        sc.verify(test_token.data.ledger[sp.record(owner=swap_contract.address, token_id=0)] == 100000)
+        sc.verify(_get_balance(test_token, sp.record(owner=swap_contract.address, token_id=0)) == 100000)
 
         # Step 1: Payer swaps 0.1 XTZ for 100 TEST
-        swap_contract.swap(_sender=payer, _amount=sp.mutez(100000))  # 0.1 XTZ
+        swap_contract.swap(_sender=payer, _amount=sp.mutez(100000))
 
         # Verify payer received TEST tokens
-        sc.verify(test_token.data.ledger[sp.record(owner=payer.address, token_id=0)] == 100)
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 100)
 
         # Step 2: Pay 100 TEST to payee
         test_token.transfer(
@@ -241,8 +272,8 @@ if "main" in __name__:
         )
 
         # Verify payment succeeded
-        sc.verify(test_token.data.ledger[sp.record(owner=payer.address, token_id=0)] == 0)
-        sc.verify(test_token.data.ledger[sp.record(owner=payee.address, token_id=0)] == 100)
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 0)
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
 
         sc.h2("Result: Swap + Payment successful")
 
@@ -254,16 +285,22 @@ if "main" in __name__:
         - Admin pauses swap
         - Swap attempts fail
         """
-        sc = sp.test_scenario("Test: Swap Paused", [fa2, tokens, swap])
+        sc = sp.test_scenario("Test: Swap Paused")
+        sc.h1("Test: Swap Paused")
 
         admin = sp.test_account("admin")
         user = sp.test_account("user")
 
-        metadata = sp.scenario_utils.metadata_of_url("ipfs://test")
-        test_token = tokens.TestToken(admin=admin.address, metadata=metadata)
+        # Deploy TEST token
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
         sc += test_token
 
-        swap_contract = swap.TestSwap(
+        swap_contract = swap_module.TestSwap(
             admin=admin.address,
             test_token_address=test_token.address,
             rate=sp.nat(1000)
@@ -291,29 +328,35 @@ if "main" in __name__:
         - Swap contract has no TEST tokens
         - Swap attempt fails
         """
-        sc = sp.test_scenario("Test: Insufficient Liquidity", [fa2, tokens, swap])
+        sc = sp.test_scenario("Test: Insufficient Liquidity")
+        sc.h1("Test: Insufficient Liquidity")
 
         admin = sp.test_account("admin")
         user = sp.test_account("user")
 
-        metadata = sp.scenario_utils.metadata_of_url("ipfs://test")
-        test_token = tokens.TestToken(admin=admin.address, metadata=metadata)
+        # Deploy TEST token
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
         sc += test_token
 
         # Deploy swap contract WITHOUT funding it
-        swap_contract = swap.TestSwap(
+        swap_contract = swap_module.TestSwap(
             admin=admin.address,
             test_token_address=test_token.address,
             rate=sp.nat(1000)
         )
         sc += swap_contract
 
-        # User tries to swap - should fail (no liquidity)
+        # User tries to swap - should fail (token not defined since nothing minted)
         swap_contract.swap(
             _sender=user,
             _amount=sp.mutez(100000),
             _valid=False,
-            _exception="FA2_INSUFFICIENT_BALANCE"
+            _exception="FA2_TOKEN_UNDEFINED"
         )
 
         sc.h2("Result: Swap rejected - insufficient liquidity")
