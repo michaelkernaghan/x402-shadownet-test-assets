@@ -6,9 +6,13 @@ MCP server providing FA2 token tools for x402 payment flows on Tezos.
 
 | Tool | Description |
 |------|-------------|
+| `tezos_get_balance` | Query XTZ balance for any address |
+| `tezos_send_xtz` | Send XTZ to another address |
 | `tezos_get_token_balance` | Query FA2 token balance for any address |
 | `tezos_swap_xtz_to_token` | Swap XTZ for FA2 tokens via swap contracts |
 | `tezos_transfer_fa2` | Transfer FA2 tokens to another address |
+| `tezos_pay_x402` | Pay an x402 payment requirement and get proof |
+| `tezos_fetch_x402` | Fetch x402-protected resource with auto-pay |
 
 ## Installation
 
@@ -92,6 +96,45 @@ When an x402 payment requires FA2 tokens:
 1. **Check balance**: Use `tezos_get_token_balance` to see if you have enough tokens
 2. **Swap if needed**: Use `tezos_swap_xtz_to_token` to acquire tokens
 3. **Pay**: Use `tezos_transfer_fa2` to send tokens to the payment address
+
+### x402 XTZ Payments
+
+For x402 payments in XTZ (not FA2 tokens):
+
+```
+// Automatic: fetch resource, pay if 402, retry with proof
+tezos_fetch_x402({
+  url: "https://api.example.com/premium/data",
+  maxPayment: 0.1  // Max 0.1 XTZ
+})
+
+// Manual: pay requirements and get X-PAYMENT header
+tezos_pay_x402({
+  paymentRequirements: {
+    network: "tezos-shadownet",
+    maxAmountRequired: "100000",  // mutez
+    resource: "https://api.example.com/premium/data",
+    payTo: "tz1..."
+  }
+})
+```
+
+### Get XTZ Balance
+
+```javascript
+tezos_get_balance({
+  address: "tz1..."  // Optional, defaults to wallet address
+})
+```
+
+### Send XTZ
+
+```javascript
+tezos_send_xtz({
+  toAddress: "tz1...",
+  amount: 1.5  // XTZ
+})
+```
 
 ## License
 

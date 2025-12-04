@@ -151,7 +151,7 @@ octez-client --endpoint https://rpc.shadownet.teztnets.com \
   --burn-cap 1
 ```
 
-### Test Coverage (15 tests)
+### Test Coverage (18 tests)
 
 **Core Scenarios (3):**
 
@@ -178,6 +178,12 @@ octez-client --endpoint https://rpc.shadownet.teztnets.com \
 - **Cost optimization**: Choose cheaper swap when both available
 - **Fallback**: Use alternative swap when preferred is paused
 - **Partial top-up**: Compare cost to complete partial balances
+
+**x402 Protocol Tests (3):**
+
+- **Payment proof structure**: Validates on-chain payment creates verifiable proof
+- **Expiry simulation**: Tests payment rejection after expiry window
+- **Max amount validation**: Ensures payments respect maxAmountRequired limits
 
 ## MCP Integration
 

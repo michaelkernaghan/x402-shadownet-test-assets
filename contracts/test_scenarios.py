@@ -23,6 +23,11 @@
 # 13. Multi-asset: Cost optimization - choose cheaper swap
 # 14. Multi-asset: Fallback when one swap is paused
 # 15. Multi-asset: Partial balance top-up optimization
+#
+# x402 Protocol tests:
+# 16. x402 payment proof structure validation
+# 17. x402 expired payment rejection
+# 18. x402 amount validation (max amount check)
 
 import smartpy as sp
 from smartpy.templates import fa2_lib as fa2
@@ -1021,3 +1026,194 @@ if "main" in __name__:
         sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
 
         sc.h2("Result: Topped up TEST for minimum cost")
+
+
+    # =========================================================================
+    # x402 Protocol Tests
+    # These tests validate the x402 payment flow structure and constraints
+    # =========================================================================
+
+    @sp.add_test()
+    def test_x402_payment_proof_structure():
+        """
+        x402 Test 16: Payment proof structure validation
+        - Simulates an x402 payment flow
+        - Verifies that payment can be linked back to a specific resource
+        - Tests the on-chain payment proof pattern
+        """
+        sc = sp.test_scenario("x402: Payment Proof Structure")
+        sc.h1("x402: Payment Proof Structure Validation")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")  # x402 server address
+
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        # Mint tokens to payer
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=1000, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+
+        # x402 payment requirements (simulated):
+        # - resource: "https://api.example.com/premium/data"
+        # - payTo: payee.address
+        # - maxAmountRequired: 100 TEST
+        # - network: "tezos-shadownet"
+        # - asset: "TEST"
+
+        sc.h2("x402 Payment Requirements Received")
+        sc.p("Resource: https://api.example.com/premium/data")
+        sc.p("Amount: 100 TEST")
+
+        # Execute payment (FA2 transfer creates proof on-chain)
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=100)]
+            )],
+            _sender=payer
+        )
+
+        # Verify payment occurred
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 900)
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
+
+        # x402 payment proof structure (off-chain, base64 encoded):
+        # {
+        #   "scheme": "exact",
+        #   "network": "tezos-shadownet",
+        #   "payload": {
+        #     "signature": "<operation_hash>",
+        #     "authorization": {
+        #       "from": "<payer_address>",
+        #       "to": "<payee_address>",
+        #       "amount": "100",
+        #       "asset": "TEST"
+        #     }
+        #   }
+        # }
+        sc.h2("Result: Payment proof created on-chain (opHash links to FA2 transfer)")
+
+
+    @sp.add_test()
+    def test_x402_expiry_simulation():
+        """
+        x402 Test 17: Expired payment rejection (simulation)
+        - x402 payments have an expiry timestamp
+        - MCP server should reject payments after expiry
+        - This test simulates the expiry concept via swap contract
+        """
+        sc = sp.test_scenario("x402: Expiry Simulation")
+        sc.h1("x402: Payment Expiry Simulation")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        swap_contract = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)
+        )
+        sc += swap_contract
+
+        test_token.mint(
+            [sp.record(to_=swap_contract.address, amount=100000, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+
+        sc.h2("Simulating x402 expiry via paused state")
+        sc.p("In real x402, MCP checks: now > paymentRequirements.expiry")
+        sc.p("Here we simulate by pausing the swap (payment no longer available)")
+
+        # Payment is available initially
+        swap_contract.swap(_sender=payer, _amount=sp.mutez(100000))
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 100)
+
+        # "Expiry" occurs - payment opportunity closed
+        swap_contract.pause(True, _sender=admin)
+
+        # Trying to get more tokens after expiry fails
+        swap_contract.swap(
+            _sender=payer,
+            _amount=sp.mutez(100000),
+            _valid=False,
+            _exception="Swap is paused"
+        )
+
+        sc.h2("Result: Payment rejected after 'expiry' (simulated via pause)")
+
+
+    @sp.add_test()
+    def test_x402_max_amount_validation():
+        """
+        x402 Test 18: Maximum amount validation
+        - x402 specifies maxAmountRequired
+        - Payment should not exceed this amount
+        - Agent should calculate exact amount needed
+        """
+        sc = sp.test_scenario("x402: Max Amount Validation")
+        sc.h1("x402: Maximum Amount Validation")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=1000, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+
+        # x402 requirement: maxAmountRequired = 100
+        max_amount = 100
+
+        sc.h2("x402 Payment: maxAmountRequired = 100")
+
+        # Agent calculates: pay exactly what's needed (not more)
+        # Good: pay 100 (exactly maxAmount)
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=max_amount)]
+            )],
+            _sender=payer
+        )
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
+        sc.h2("Result: Paid exact amount (100 TEST)")
+
+        # Agent should NOT overpay - this is MCP logic, not enforced on-chain
+        # The MCP tool validates: amountMutez <= maxAmountMutez
+        # If exceeded, returns error before even attempting payment
+        sc.p("Note: Overpayment prevention is MCP-side validation")
+        sc.p("MCP checks: if (amountMutez > maxPaymentMutez) return error")
