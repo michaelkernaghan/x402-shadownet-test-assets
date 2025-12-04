@@ -11,24 +11,39 @@ This repo contains the contracts and documentation needed to test x402 payment c
 | Contract | Address | Purpose |
 |----------|---------|---------|
 | **TEST Token** | `KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T` | FA2 token for x402 payments |
-| **WRONG Token** | `KT1Sr4yixp2Z9q4xDGz2UaV4zdjhjL1eTpkj` | FA2 token to test rejection |
-| **TEST_SWAP** | `KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt` | XTZ → TEST swap |
+| **WRONG Token** | `KT1Sr4yixp2Z9q4xDGz2UaV4zdjhjL1eTpkj` | FA2 token for multi-asset testing |
+| **TEST_SWAP** | `KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt` | XTZ → TEST swap (rate: 1000) |
+| **WRONG_SWAP** | `KT1TT7qrqBy3r7jSjNyLRAGFtihu6GZBRg1K` | XTZ → WRONG swap (rate: 500) |
 
 **Network:** Shadownet
 **Admin:** `tz1hUXcGHiNsR3TRyYTeAaXtDqMCfLUExaqn`
 
 ## Swap Details
 
-- **Rate:** 1 XTZ = 1000 TEST (fixed)
-- **Entrypoint:** `swap`
-- **Liquidity:** ~100,000 TEST (mint more as needed)
+| Swap | Rate | Cost for 100 tokens |
+|------|------|---------------------|
+| TEST_SWAP | 1 XTZ = 1000 TEST | 0.1 XTZ |
+| WRONG_SWAP | 1 XTZ = 500 WRONG | 0.2 XTZ |
+
+The different rates enable testing agent cost optimization when multiple payment options are accepted.
 
 ## Test Scenarios
+
+**Core x402 Flows:**
 
 ```
 1. ✅ Happy path: x402 requests TEST → wallet has TEST → pay → success
 2. ❌ Wrong token: x402 requests TEST → pay with WRONG → rejected
 3. 🔄 Swap flow: x402 requests TEST → no TEST → swap XTZ → pay → success
+```
+
+**Multi-Asset Agent Decisions:**
+
+```
+4. 💰 Existing balance: Agent has enough tokens → pay directly (no swap)
+5. 📊 Cost optimization: Compare swap rates → choose cheaper option
+6. 🔀 Fallback: Preferred swap paused → use alternative swap
+7. 📈 Partial top-up: Compare cost to complete partial balances
 ```
 
 ## Usage
@@ -40,6 +55,15 @@ octez-client --endpoint https://rpc.shadownet.teztnets.com \
   transfer 0.1 from <wallet> to KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt \
   --entrypoint swap --burn-cap 0.5
 # Sends 0.1 XTZ, receives 100 TEST
+```
+
+### Swap XTZ for WRONG
+
+```bash
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0.2 from <wallet> to KT1TT7qrqBy3r7jSjNyLRAGFtihu6GZBRg1K \
+  --entrypoint swap --burn-cap 0.5
+# Sends 0.2 XTZ, receives 100 WRONG (more expensive than TEST)
 ```
 
 ### Transfer TEST Tokens
@@ -127,26 +151,33 @@ octez-client --endpoint https://rpc.shadownet.teztnets.com \
   --burn-cap 1
 ```
 
-### Test Coverage
+### Test Coverage (15 tests)
 
-**Core Scenarios:**
+**Core Scenarios (3):**
 
 - **Scenario 1**: Happy path - wallet has TEST, payment succeeds
 - **Scenario 2**: Wrong token - payment with wrong token rejected
 - **Scenario 3**: Swap flow - no TEST → swap XTZ → pay → success
 
-**Additional Tests:**
+**Additional Tests (2):**
 
 - **Swap paused**: Verify paused swap rejects transactions
 - **Insufficient liquidity**: Verify unfunded swap fails gracefully
 
-**Edge Cases:**
+**Edge Cases (6):**
 
 - Zero amount swap/transfer handling
 - Invalid token ID rejection
 - Insufficient balance rejection
 - Partial swap then payment (multiple swaps to accumulate)
 - Unauthorized pause attempt rejection
+
+**Multi-Asset Agent Decision Tests (4):**
+
+- **Existing balance**: Pay with available tokens (no swap needed)
+- **Cost optimization**: Choose cheaper swap when both available
+- **Fallback**: Use alternative swap when preferred is paused
+- **Partial top-up**: Compare cost to complete partial balances
 
 ## MCP Integration
 

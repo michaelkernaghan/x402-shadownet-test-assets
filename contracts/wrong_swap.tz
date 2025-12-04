@@ -1,0 +1,128 @@
+parameter (or (unit %swap) (or (nat %update_rate) (unit %withdraw)));
+storage   (pair (address %admin) (pair (nat %rate) (address %wrong_token)));
+code
+  {
+    UNPAIR;     # @parameter : @storage
+    IF_LEFT
+      {
+        DROP;       # @storage
+        # == swap ==
+        # assert sp.amount > sp.mutez(0), "Must send XTZ" # @storage
+        PUSH mutez 0; # mutez : @storage
+        AMOUNT;     # @amount : mutez : @storage
+        COMPARE;    # int : @storage
+        GT;         # bool : @storage
+        IF
+          {}
+          {
+            PUSH string "Must send XTZ"; # string : @storage
+            FAILWITH;   # FAILED
+          }; # @storage
+        # xtz_in_mutez = sp.fst(sp.ediv(sp.amount, sp.mutez(1)).unwrap_some()) # @storage
+        PUSH mutez 1; # mutez : @storage
+        AMOUNT;     # @amount : mutez : @storage
+        EDIV;       # option (pair nat mutez) : @storage
+        IF_NONE
+          {
+            PUSH int 14; # int : @storage
+            FAILWITH;   # FAILED
+          }
+          {}; # @some : @storage
+        CAR;        # nat : @storage
+        # wrong_amount = sp.fst(sp.ediv(xtz_in_mutez * self.data.rate, sp.nat(1000000)).unwrap_some()) # nat : @storage
+        PUSH nat 1000000; # nat : nat : @storage
+        DUP 3;      # @storage : nat : nat : @storage
+        GET 3;      # nat : nat : nat : @storage
+        DIG 2;      # nat : nat : nat : @storage
+        MUL;        # nat : nat : @storage
+        EDIV;       # option (pair nat nat) : @storage
+        IF_NONE
+          {
+            PUSH int 15; # int : @storage
+            FAILWITH;   # FAILED
+          }
+          {}; # @some : @storage
+        CAR;        # nat : @storage
+        # transfer_param = [ # nat : @storage
+        NIL (pair address (list (pair address (pair nat nat)))); # list (pair address (list (pair address (pair nat nat)))) : nat : @storage
+        NIL (pair address (pair nat nat)); # list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : nat : @storage
+        DIG 2;      # nat : list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        PUSH nat 0; # nat : nat : list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        SENDER;     # @sender : nat : nat : list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        PAIR 3;     # pair @sender (pair nat nat) : list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        CONS;       # list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        SELF_ADDRESS; # @self : list (pair address (pair nat nat)) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        PAIR;       # pair @self (list (pair address (pair nat nat))) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        CONS;       # list (pair address (list (pair address (pair nat nat)))) : @storage
+        # token_contract = sp.contract( # list (pair address (list (pair address (pair nat nat)))) : @storage
+        DUP 2;      # @storage : list (pair address (list (pair address (pair nat nat)))) : @storage
+        GET 4;      # address : list (pair address (list (pair address (pair nat nat)))) : @storage
+        CONTRACT %transfer (list (pair (address %from_) (list %txs (pair (address %to_) (pair (nat %token_id) (nat %amount)))))); # option (contract (list (pair (address %from_) (list %txs (pair (address %to_) (pair (nat %token_id) (nat %amount))))))) : list (pair address (list (pair address (pair nat nat)))) : @storage
+        IF_NONE
+          {
+            PUSH string "Invalid token contract"; # string : list (pair address (list (pair address (pair nat nat)))) : @storage
+            FAILWITH;   # FAILED
+          }
+          {}; # @some : list (pair address (list (pair address (pair nat nat)))) : @storage
+        # sp.transfer(transfer_param, sp.mutez(0), token_contract) # @some : list (pair address (list (pair address (pair nat nat)))) : @storage
+        NIL operation; # list operation : @some : list (pair address (list (pair address (pair nat nat)))) : @storage
+        SWAP;       # @some : list operation : list (pair address (list (pair address (pair nat nat)))) : @storage
+        PUSH mutez 0; # mutez : @some : list operation : list (pair address (list (pair address (pair nat nat)))) : @storage
+        DIG 3;      # list (pair address (list (pair address (pair nat nat)))) : mutez : @some : list operation : @storage
+        TRANSFER_TOKENS; # operation : list operation : @storage
+        CONS;       # list operation : @storage
+      }
+      {
+        IF_LEFT
+          {
+            # == update_rate ==
+            # assert sp.sender == self.data.admin, "Not admin" # @parameter%update_rate : @storage
+            DUP 2;      # @storage : @parameter%update_rate : @storage
+            CAR;        # address : @parameter%update_rate : @storage
+            SENDER;     # @sender : address : @parameter%update_rate : @storage
+            COMPARE;    # int : @parameter%update_rate : @storage
+            EQ;         # bool : @parameter%update_rate : @storage
+            IF
+              {}
+              {
+                PUSH string "Not admin"; # string : @parameter%update_rate : @storage
+                FAILWITH;   # FAILED
+              }; # @parameter%update_rate : @storage
+            # self.data.rate = new_rate # @parameter%update_rate : @storage
+            UPDATE 3;   # @storage
+            NIL operation; # list operation : @storage
+          }
+          {
+            DROP;       # @storage
+            # == withdraw ==
+            # assert sp.sender == self.data.admin, "Not admin" # @storage
+            DUP;        # @storage : @storage
+            CAR;        # address : @storage
+            SENDER;     # @sender : address : @storage
+            COMPARE;    # int : @storage
+            EQ;         # bool : @storage
+            IF
+              {}
+              {
+                PUSH string "Not admin"; # string : @storage
+                FAILWITH;   # FAILED
+              }; # @storage
+            # sp.send(self.data.admin, sp.balance) # @storage
+            NIL operation; # list operation : @storage
+            DUP 2;      # @storage : list operation : @storage
+            CAR;        # address : list operation : @storage
+            CONTRACT unit; # option (contract unit) : list operation : @storage
+            IF_NONE
+              {
+                PUSH int 41; # int : list operation : @storage
+                FAILWITH;   # FAILED
+              }
+              {}; # @some : list operation : @storage
+            BALANCE;    # @balance : @some : list operation : @storage
+            UNIT;       # unit : @balance : @some : list operation : @storage
+            TRANSFER_TOKENS; # operation : list operation : @storage
+            CONS;       # list operation : @storage
+          }; # list operation : @storage
+      }; # list operation : @storage
+    PAIR;       # pair (list operation) @storage
+  };

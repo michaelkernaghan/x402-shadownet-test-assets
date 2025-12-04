@@ -20,11 +20,17 @@
       "symbol": "WRONG",
       "decimals": 0
     },
-    "SWAP": {
+    "TEST_SWAP": {
       "address": "KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt",
       "description": "XTZ to TEST swap contract",
       "rate": 1000,
       "rate_description": "1 XTZ = 1000 TEST"
+    },
+    "WRONG_SWAP": {
+      "address": "KT1TT7qrqBy3r7jSjNyLRAGFtihu6GZBRg1K",
+      "description": "XTZ to WRONG swap contract",
+      "rate": 500,
+      "rate_description": "1 XTZ = 500 WRONG (more expensive than TEST)"
     }
   },
   "admin": {
@@ -46,15 +52,34 @@
         "parameter": "record(requests: list(record(owner: address, token_id: nat)), callback: contract)"
       }
     },
-    "SWAP": {
+    "TEST_SWAP": {
       "swap": {
         "description": "Swap XTZ for TEST tokens",
         "parameter": "unit",
         "note": "Send XTZ with the transaction"
       },
-      "pause": {
-        "description": "Pause/unpause swap (admin only)",
-        "parameter": "bool"
+      "update_rate": {
+        "description": "Update swap rate (admin only)",
+        "parameter": "nat"
+      },
+      "withdraw": {
+        "description": "Withdraw XTZ from contract (admin only)",
+        "parameter": "unit"
+      }
+    },
+    "WRONG_SWAP": {
+      "swap": {
+        "description": "Swap XTZ for WRONG tokens",
+        "parameter": "unit",
+        "note": "Send XTZ with the transaction"
+      },
+      "update_rate": {
+        "description": "Update swap rate (admin only)",
+        "parameter": "nat"
+      },
+      "withdraw": {
+        "description": "Withdraw XTZ from contract (admin only)",
+        "parameter": "unit"
       }
     }
   },

@@ -158,17 +158,112 @@ async function handleX402Payment(paymentReq: X402PaymentRequirement) {
 }
 ```
 
+## Multi-Asset Payment Decision Logic
+
+When x402 accepts multiple tokens (e.g., TEST or WRONG), the agent must decide which to use:
+
+```typescript
+interface TokenOption {
+  token: string;           // Token contract address
+  swapContract: string;    // Swap contract address
+  rate: number;            // Tokens per XTZ
+  balance: number;         // Current balance
+}
+
+async function choosePaymentToken(
+  requiredAmount: number,
+  options: TokenOption[]
+): Promise<{ token: TokenOption; swapAmount: number }> {
+  // Strategy: Minimize XTZ cost
+
+  // 1. Check if any token has sufficient balance (no swap needed)
+  const sufficientBalance = options.find(opt => opt.balance >= requiredAmount);
+  if (sufficientBalance) {
+    return { token: sufficientBalance, swapAmount: 0 };
+  }
+
+  // 2. Calculate cost to top up each token
+  const costs = options.map(opt => {
+    const needed = requiredAmount - opt.balance;
+    const xtzCost = needed / opt.rate;  // Higher rate = cheaper
+    return { token: opt, xtzCost, needed };
+  });
+
+  // 3. Sort by cost (ascending) and pick cheapest
+  costs.sort((a, b) => a.xtzCost - b.xtzCost);
+  const cheapest = costs[0];
+
+  return { token: cheapest.token, swapAmount: cheapest.xtzCost };
+}
+
+// Example usage with TEST and WRONG
+const options: TokenOption[] = [
+  {
+    token: CONTRACTS.TEST_TOKEN,
+    swapContract: CONTRACTS.TEST_SWAP,
+    rate: 1000,  // 1 XTZ = 1000 TEST
+    balance: 60  // Have 60 TEST
+  },
+  {
+    token: CONTRACTS.WRONG_TOKEN,
+    swapContract: CONTRACTS.WRONG_SWAP,
+    rate: 500,   // 1 XTZ = 500 WRONG
+    balance: 30  // Have 30 WRONG
+  }
+];
+
+// Need 100 tokens:
+// - TEST: need 40 more, cost = 40/1000 = 0.04 XTZ ✓ (cheaper)
+// - WRONG: need 70 more, cost = 70/500 = 0.14 XTZ
+const decision = await choosePaymentToken(100, options);
+// Result: { token: TEST, swapAmount: 0.04 }
+```
+
+### Decision Flow Diagram
+
+```text
+x402 Payment Request (accepts: [TEST, WRONG])
+                    │
+                    ▼
+        ┌─────────────────────────┐
+        │ Check token balances    │
+        └─────────────────────────┘
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+   Have enough?            Need swap?
+        │                       │
+        ▼                       ▼
+   Pay directly         Compare swap costs
+        │                       │
+        │               ┌───────┴───────┐
+        │               ▼               ▼
+        │          TEST swap        WRONG swap
+        │          (cheaper)        (available?)
+        │               │               │
+        │               ▼               ▼
+        │          0.1 XTZ/100     0.2 XTZ/100
+        │               │               │
+        └───────────────┴───────┬───────┘
+                                │
+                                ▼
+                         Execute payment
+```
+
 ## Contract Addresses
 
 ```typescript
 const CONTRACTS = {
   TEST_TOKEN: "KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T",
   WRONG_TOKEN: "KT1Sr4yixp2Z9q4xDGz2UaV4zdjhjL1eTpkj",
-  SWAP: "KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt"
+  TEST_SWAP: "KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt",
+  WRONG_SWAP: "KT1TT7qrqBy3r7jSjNyLRAGFtihu6GZBRg1K"
 };
 
-const LEDGER_BIG_MAP_ID = 1278;
-const SWAP_RATE = 1000;  // 1 XTZ = 1000 TEST
+const SWAP_RATES = {
+  TEST: 1000,  // 1 XTZ = 1000 TEST (cheaper)
+  WRONG: 500   // 1 XTZ = 500 WRONG (more expensive)
+};
 ```
 
 ## FA2 Transfer Parameter Format

@@ -17,6 +17,12 @@
 # 9. Insufficient balance - rejected
 # 10. Partial swap then payment - multiple swaps to accumulate tokens
 # 11. Unauthorized pause - non-admin cannot pause
+#
+# Multi-asset payment scenarios (agent decision-making):
+# 12. Multi-asset: Pay with existing balance (no swap needed)
+# 13. Multi-asset: Cost optimization - choose cheaper swap
+# 14. Multi-asset: Fallback when one swap is paused
+# 15. Multi-asset: Partial balance top-up optimization
 
 import smartpy as sp
 from smartpy.templates import fa2_lib as fa2
@@ -666,3 +672,352 @@ if "main" in __name__:
         )
 
         sc.h2("Result: Unauthorized pause rejected")
+
+
+    # =========================================================================
+    # Multi-Asset Payment Scenarios
+    # These tests simulate agent decision-making when x402 accepts multiple tokens
+    # =========================================================================
+
+    @sp.add_test()
+    def test_multi_asset_pay_with_existing_balance():
+        """
+        Multi-Asset Scenario A: Agent has enough of one token
+        - x402 accepts TEST or WRONG
+        - Agent has 500 TEST, needs 100
+        - Decision: Pay with TEST (no swap needed)
+        """
+        sc = sp.test_scenario("Multi-Asset: Existing Balance")
+        sc.h1("Multi-Asset: Pay with Existing Balance")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        # Token metadata
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+        wrong_md = fa2.make_metadata(name="WRONG", decimals=0, symbol="WRONG")
+
+        # Deploy both tokens
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        wrong_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += wrong_token
+
+        # Payer has 500 TEST (enough for payment)
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=500, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+
+        # Simulate agent decision: has TEST balance >= required amount
+        # Decision: Use TEST directly, no swap needed
+        sc.h2("Agent Decision: Use existing TEST balance")
+
+        # Pay 100 TEST
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=100)]
+            )],
+            _sender=payer
+        )
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 400)
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
+
+        sc.h2("Result: Paid with existing balance - no swap needed")
+
+
+    @sp.add_test()
+    def test_multi_asset_cost_optimization():
+        """
+        Multi-Asset Scenario B: Choose cheaper swap
+        - x402 accepts TEST or WRONG
+        - Agent has 0 of both, needs 100 tokens
+        - TEST swap: 1 XTZ = 1000 TEST (cost for 100: 0.1 XTZ)
+        - WRONG swap: 1 XTZ = 500 WRONG (cost for 100: 0.2 XTZ)
+        - Decision: Swap for TEST (cheaper)
+        """
+        sc = sp.test_scenario("Multi-Asset: Cost Optimization")
+        sc.h1("Multi-Asset: Choose Cheaper Swap")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+        wrong_md = fa2.make_metadata(name="WRONG", decimals=0, symbol="WRONG")
+
+        # Deploy TEST token and swap (rate: 1000)
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        test_swap = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)  # 1 XTZ = 1000 TEST
+        )
+        sc += test_swap
+
+        # Fund TEST swap
+        test_token.mint(
+            [sp.record(to_=test_swap.address, amount=100000, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+
+        # Deploy WRONG token and swap (rate: 500 - more expensive)
+        wrong_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += wrong_token
+
+        wrong_swap = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=wrong_token.address,
+            rate=sp.nat(500)  # 1 XTZ = 500 WRONG (2x more expensive)
+        )
+        sc += wrong_swap
+
+        # Fund WRONG swap
+        wrong_token.mint(
+            [sp.record(to_=wrong_swap.address, amount=100000, token=sp.variant("new", wrong_md))],
+            _sender=admin
+        )
+
+        # Agent decision: Compare costs
+        # - TEST: 100 tokens / 1000 rate = 0.1 XTZ
+        # - WRONG: 100 tokens / 500 rate = 0.2 XTZ
+        # Decision: Use TEST (cheaper)
+        sc.h2("Agent Decision: TEST is cheaper (0.1 XTZ vs 0.2 XTZ)")
+
+        # Swap for TEST
+        test_swap.swap(_sender=payer, _amount=sp.mutez(100000))  # 0.1 XTZ
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 100)
+
+        # Pay with TEST
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=100)]
+            )],
+            _sender=payer
+        )
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
+
+        sc.h2("Result: Used cheaper swap (TEST at 0.1 XTZ)")
+
+
+    @sp.add_test()
+    def test_multi_asset_fallback_paused():
+        """
+        Multi-Asset Scenario C: Fallback when preferred swap is paused
+        - x402 accepts TEST or WRONG
+        - Agent has 0 of both, needs 100 tokens
+        - TEST swap: paused
+        - WRONG swap: available (1 XTZ = 500 WRONG)
+        - Decision: Use WRONG swap as fallback
+        """
+        sc = sp.test_scenario("Multi-Asset: Paused Fallback")
+        sc.h1("Multi-Asset: Fallback When Swap Paused")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+        wrong_md = fa2.make_metadata(name="WRONG", decimals=0, symbol="WRONG")
+
+        # Deploy TEST token and swap (will be paused)
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        test_swap = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)
+        )
+        sc += test_swap
+
+        test_token.mint(
+            [sp.record(to_=test_swap.address, amount=100000, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+
+        # PAUSE the TEST swap
+        test_swap.pause(True, _sender=admin)
+
+        # Deploy WRONG token and swap (available)
+        wrong_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += wrong_token
+
+        wrong_swap = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=wrong_token.address,
+            rate=sp.nat(500)
+        )
+        sc += wrong_swap
+
+        wrong_token.mint(
+            [sp.record(to_=wrong_swap.address, amount=100000, token=sp.variant("new", wrong_md))],
+            _sender=admin
+        )
+
+        # Agent decision: TEST swap is paused, use WRONG as fallback
+        sc.h2("Agent Decision: TEST swap paused, fallback to WRONG")
+
+        # Verify TEST swap fails
+        test_swap.swap(
+            _sender=payer,
+            _amount=sp.mutez(100000),
+            _valid=False,
+            _exception="Swap is paused"
+        )
+
+        # Use WRONG swap instead
+        wrong_swap.swap(_sender=payer, _amount=sp.mutez(200000))  # 0.2 XTZ for 100 WRONG
+        sc.verify(_get_balance(wrong_token, sp.record(owner=payer.address, token_id=0)) == 100)
+
+        # Pay with WRONG
+        wrong_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=100)]
+            )],
+            _sender=payer
+        )
+
+        sc.verify(_get_balance(wrong_token, sp.record(owner=payee.address, token_id=0)) == 100)
+
+        sc.h2("Result: Successfully used fallback swap")
+
+
+    @sp.add_test()
+    def test_multi_asset_partial_balance_topup():
+        """
+        Multi-Asset Scenario D: Top up partial balance
+        - x402 accepts TEST or WRONG
+        - Agent has 60 TEST and 30 WRONG, needs 100 tokens
+        - Cost to top up TEST: 40 tokens / 1000 = 0.04 XTZ
+        - Cost to top up WRONG: 70 tokens / 500 = 0.14 XTZ
+        - Decision: Top up TEST (cheaper)
+        """
+        sc = sp.test_scenario("Multi-Asset: Partial Top-up")
+        sc.h1("Multi-Asset: Top Up Partial Balance")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        test_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+        wrong_md = fa2.make_metadata(name="WRONG", decimals=0, symbol="WRONG")
+
+        # Deploy TEST token and swap
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        test_swap = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)
+        )
+        sc += test_swap
+
+        # Mint to payer (60 TEST) and swap contract
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=60, token=sp.variant("new", test_md))],
+            _sender=admin
+        )
+        test_token.mint(
+            [sp.record(to_=test_swap.address, amount=100000, token=sp.variant("existing", sp.nat(0)))],
+            _sender=admin
+        )
+
+        # Deploy WRONG token and swap
+        wrong_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += wrong_token
+
+        wrong_swap = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=wrong_token.address,
+            rate=sp.nat(500)
+        )
+        sc += wrong_swap
+
+        # Mint to payer (30 WRONG) and swap contract
+        wrong_token.mint(
+            [sp.record(to_=payer.address, amount=30, token=sp.variant("new", wrong_md))],
+            _sender=admin
+        )
+        wrong_token.mint(
+            [sp.record(to_=wrong_swap.address, amount=100000, token=sp.variant("existing", sp.nat(0)))],
+            _sender=admin
+        )
+
+        # Agent decision: Compare top-up costs
+        # - TEST: need 40 more, cost = 40/1000 = 0.04 XTZ
+        # - WRONG: need 70 more, cost = 70/500 = 0.14 XTZ
+        # Decision: Top up TEST
+        sc.h2("Agent Decision: Top up TEST (0.04 XTZ vs 0.14 XTZ)")
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 60)
+        sc.verify(_get_balance(wrong_token, sp.record(owner=payer.address, token_id=0)) == 30)
+
+        # Swap for 40 more TEST (round up to 0.1 XTZ for 100 TEST, but we only need 40)
+        # In practice: 40000 mutez would give 40 TEST
+        test_swap.swap(_sender=payer, _amount=sp.mutez(40000))
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 100)
+
+        # Pay with TEST
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=100)]
+            )],
+            _sender=payer
+        )
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 100)
+
+        sc.h2("Result: Topped up TEST for minimum cost")
