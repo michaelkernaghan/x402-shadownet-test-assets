@@ -81,7 +81,58 @@ Balances stored in big map **1278**. Query via RPC or indexer.
 ## Contract Source
 
 - `contracts/test_token_fa2.py` - SmartPy FA2 fungible token
-- `contracts/test_swap.tz` - Michelson swap contract
+- `contracts/test_swap.py` - SmartPy swap contract
+- `contracts/test_swap.tz` - Compiled Michelson swap contract
+- `contracts/test_scenarios.py` - SmartPy test suite
+
+## Running Tests
+
+### SmartPy Tests (Contract Logic)
+
+The test suite covers the three main x402 scenarios. Run with SmartPy CLI or the online IDE:
+
+```bash
+# Install SmartPy CLI (if not installed)
+curl -s https://smartpy.io/cli/install.sh | bash
+
+# Run all scenario tests
+~/smartpy-cli/SmartPy.sh test contracts/test_scenarios.py output/
+
+# Run individual contract tests
+~/smartpy-cli/SmartPy.sh test contracts/test_swap.py output/
+~/smartpy-cli/SmartPy.sh test contracts/test_token_fa2.py output/
+```
+
+Or paste the contract code into the [SmartPy online IDE](https://smartpy.io/).
+
+### Live Network Tests (Shadownet)
+
+Test the deployed contracts directly:
+
+```bash
+# 1. Test swap (requires XTZ in wallet)
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0.1 from <wallet> to KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt \
+  --entrypoint swap --burn-cap 0.5
+
+# 2. Verify you received TEST tokens (check big map 1278)
+# Use an indexer or RPC to query your balance
+
+# 3. Test FA2 transfer
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0 from <wallet> to KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T \
+  --entrypoint transfer \
+  --arg '{ Pair "<your_tz_address>" { Pair "<recipient_address>" (Pair 0 100) } }' \
+  --burn-cap 1
+```
+
+### Test Coverage
+
+- **Scenario 1**: Happy path - wallet has TEST, payment succeeds
+- **Scenario 2**: Wrong token - payment with wrong token rejected
+- **Scenario 3**: Swap flow - no TEST → swap XTZ → pay → success
+- **Swap paused**: Verify paused swap rejects transactions
+- **Insufficient liquidity**: Verify unfunded swap fails gracefully
 
 ## MCP Integration
 
