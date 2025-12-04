@@ -21,7 +21,7 @@ This repo contains the contracts and documentation needed to test x402 payment c
 
 - **Rate:** 1 XTZ = 1000 TEST (fixed)
 - **Entrypoint:** `swap`
-- **Liquidity:** ~250,000 TEST
+- **Liquidity:** ~100,000 TEST (mint more as needed)
 
 ## Test Scenarios
 
@@ -36,7 +36,8 @@ This repo contains the contracts and documentation needed to test x402 payment c
 ### Swap XTZ for TEST
 
 ```bash
-octez-client transfer 0.1 from <wallet> to KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt \
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0.1 from <wallet> to KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt \
   --entrypoint swap --burn-cap 0.5
 # Sends 0.1 XTZ, receives 100 TEST
 ```
@@ -44,9 +45,32 @@ octez-client transfer 0.1 from <wallet> to KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt 
 ### Transfer TEST Tokens
 
 ```bash
-octez-client transfer 0 from <wallet> to KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T \
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0 from <wallet> to KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T \
   --entrypoint transfer \
   --arg '{ Pair "<from_address>" { Pair "<to_address>" (Pair 0 <amount>) } }' \
+  --burn-cap 1
+```
+
+### Mint TEST Tokens (Admin Only)
+
+Only the admin (`tz1hUXcGHiNsR3TRyYTeAaXtDqMCfLUExaqn`) can mint tokens:
+
+```bash
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0 from <admin_wallet> to KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T \
+  --entrypoint mint_tokens \
+  --arg '{ Pair "<recipient_address>" <amount> }' \
+  --burn-cap 1
+```
+
+Example - mint 100,000 TEST to the swap contract:
+
+```bash
+octez-client --endpoint https://rpc.shadownet.teztnets.com \
+  transfer 0 from soru_funder to KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T \
+  --entrypoint mint_tokens \
+  --arg '{ Pair "KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt" 100000 }' \
   --burn-cap 1
 ```
 
