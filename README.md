@@ -80,10 +80,8 @@ Balances stored in big map **1278**. Query via RPC or indexer.
 
 ## Contract Source
 
-- `contracts/test_token_fa2.py` - SmartPy FA2 fungible token
-- `contracts/test_swap.py` - SmartPy swap contract
+- `contracts/test_scenarios.py` - SmartPy test suite with FA2 token and swap contracts
 - `contracts/test_swap.tz` - Compiled Michelson swap contract
-- `contracts/test_scenarios.py` - SmartPy test suite
 
 ## Running Tests
 
@@ -99,10 +97,6 @@ pip install smartpy-tezos
 
 # Run all scenario tests
 python contracts/test_scenarios.py
-
-# Run individual contract tests
-python contracts/test_swap.py
-python contracts/test_token_fa2.py
 ```
 
 Test output will be generated in a directory alongside the script.
