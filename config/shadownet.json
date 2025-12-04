@@ -1,0 +1,69 @@
+{
+  "network": {
+    "name": "shadownet",
+    "rpc": "https://rpc.shadownet.teztnets.com",
+    "explorer": "https://shadownet.tzkt.io"
+  },
+  "contracts": {
+    "TEST_TOKEN": {
+      "address": "KT1WC1mypEpFzZCq6rJbc4XSjaz1Ym42Do2T",
+      "description": "FA2 fungible token for x402 payments",
+      "token_id": 0,
+      "symbol": "TEST",
+      "decimals": 0,
+      "ledger_big_map_id": 1278
+    },
+    "WRONG_TOKEN": {
+      "address": "KT1Sr4yixp2Z9q4xDGz2UaV4zdjhjL1eTpkj",
+      "description": "FA2 token for testing payment rejection",
+      "token_id": 0,
+      "symbol": "WRONG",
+      "decimals": 0
+    },
+    "SWAP": {
+      "address": "KT1S7DbL8id9WGaYdqTaGCBD6RYwqYWNyMnt",
+      "description": "XTZ to TEST swap contract",
+      "rate": 1000,
+      "rate_description": "1 XTZ = 1000 TEST"
+    }
+  },
+  "admin": {
+    "address": "tz1hUXcGHiNsR3TRyYTeAaXtDqMCfLUExaqn",
+    "description": "Contract admin (can mint tokens, pause swap)"
+  },
+  "entrypoints": {
+    "TEST_TOKEN": {
+      "transfer": {
+        "description": "Transfer tokens (FA2 standard)",
+        "parameter": "list(record(from_: address, txs: list(record(to_: address, token_id: nat, amount: nat))))"
+      },
+      "mint_tokens": {
+        "description": "Mint new tokens (admin only)",
+        "parameter": "record(to_: address, amount: nat)"
+      },
+      "balance_of": {
+        "description": "Query balances (FA2 callback pattern)",
+        "parameter": "record(requests: list(record(owner: address, token_id: nat)), callback: contract)"
+      }
+    },
+    "SWAP": {
+      "swap": {
+        "description": "Swap XTZ for TEST tokens",
+        "parameter": "unit",
+        "note": "Send XTZ with the transaction"
+      },
+      "pause": {
+        "description": "Pause/unpause swap (admin only)",
+        "parameter": "bool"
+      }
+    }
+  },
+  "errors": {
+    "FA2_TOKEN_UNDEFINED": "Token ID does not exist",
+    "FA2_INSUFFICIENT_BALANCE": "Sender does not have enough tokens",
+    "FA2_NOT_OPERATOR": "Sender is not authorized to transfer",
+    "Swap is paused": "Swap contract is paused by admin",
+    "Must send XTZ": "Swap requires XTZ to be sent with transaction",
+    "Not admin": "Only admin can perform this action"
+  }
+}

@@ -78,10 +78,13 @@ octez-client --endpoint https://rpc.shadownet.teztnets.com \
 
 Balances stored in big map **1278**. Query via RPC or indexer.
 
+## Configuration
+
+Contract addresses and configuration are available in `config/shadownet.json` for programmatic access.
+
 ## Contract Source
 
 - `contracts/test_scenarios.py` - SmartPy test suite with FA2 token and swap contracts
-- `contracts/test_swap.tz` - Compiled Michelson swap contract
 
 ## Running Tests
 
@@ -126,11 +129,24 @@ octez-client --endpoint https://rpc.shadownet.teztnets.com \
 
 ### Test Coverage
 
+**Core Scenarios:**
+
 - **Scenario 1**: Happy path - wallet has TEST, payment succeeds
 - **Scenario 2**: Wrong token - payment with wrong token rejected
 - **Scenario 3**: Swap flow - no TEST → swap XTZ → pay → success
+
+**Additional Tests:**
+
 - **Swap paused**: Verify paused swap rejects transactions
 - **Insufficient liquidity**: Verify unfunded swap fails gracefully
+
+**Edge Cases:**
+
+- Zero amount swap/transfer handling
+- Invalid token ID rejection
+- Insufficient balance rejection
+- Partial swap then payment (multiple swaps to accumulate)
+- Unauthorized pause attempt rejection
 
 ## MCP Integration
 

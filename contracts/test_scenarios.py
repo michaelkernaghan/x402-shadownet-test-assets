@@ -1,10 +1,22 @@
 # x402 Test Scenarios
 # Run with SmartPy: https://smartpy.io/
 #
-# Tests the three main x402 scenarios:
+# Core x402 scenarios:
 # 1. Happy path - wallet has TEST tokens, payment succeeds
 # 2. Wrong token - payment with wrong token rejected
 # 3. Swap flow - no TEST tokens, swap XTZ -> TEST, then pay
+#
+# Additional tests:
+# 4. Swap paused - admin can pause swap contract
+# 5. Insufficient liquidity - swap fails when contract has no tokens
+#
+# Edge cases:
+# 6. Zero amount swap - rejected
+# 7. Zero amount transfer - allowed (FA2 no-op)
+# 8. Invalid token ID - rejected
+# 9. Insufficient balance - rejected
+# 10. Partial swap then payment - multiple swaps to accumulate tokens
+# 11. Unauthorized pause - non-admin cannot pause
 
 import smartpy as sp
 from smartpy.templates import fa2_lib as fa2
@@ -360,3 +372,297 @@ if "main" in __name__:
         )
 
         sc.h2("Result: Swap rejected - insufficient liquidity")
+
+
+    @sp.add_test()
+    def test_zero_amount_swap():
+        """
+        Edge Case: Zero amount swap
+        - User sends 0 XTZ to swap
+        - Should be rejected
+        """
+        sc = sp.test_scenario("Edge Case: Zero Amount Swap")
+        sc.h1("Edge Case: Zero Amount Swap")
+
+        admin = sp.test_account("admin")
+        user = sp.test_account("user")
+
+        # Deploy TEST token
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        # Deploy and fund swap contract
+        swap_contract = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)
+        )
+        sc += swap_contract
+
+        test_token.mint(
+            [sp.record(to_=swap_contract.address, amount=100000, token=sp.variant("new", tok0_md))],
+            _sender=admin
+        )
+
+        # User tries to swap 0 XTZ - should fail
+        swap_contract.swap(
+            _sender=user,
+            _amount=sp.mutez(0),
+            _valid=False,
+            _exception="Must send XTZ"
+        )
+
+        sc.h2("Result: Zero amount swap rejected")
+
+
+    @sp.add_test()
+    def test_zero_amount_transfer():
+        """
+        Edge Case: Zero amount FA2 transfer
+        - User tries to transfer 0 tokens
+        - FA2 standard allows this (it's a no-op)
+        """
+        sc = sp.test_scenario("Edge Case: Zero Amount Transfer")
+        sc.h1("Edge Case: Zero Amount Transfer")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        # Mint tokens to payer
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=1000, token=sp.variant("new", tok0_md))],
+            _sender=admin
+        )
+
+        # Transfer 0 tokens - FA2 allows this
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=0)]
+            )],
+            _sender=payer
+        )
+
+        # Balances unchanged
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 1000)
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 0)
+
+        sc.h2("Result: Zero amount transfer allowed (no-op)")
+
+
+    @sp.add_test()
+    def test_invalid_token_id():
+        """
+        Edge Case: Invalid token ID
+        - User tries to transfer a non-existent token ID
+        - Should fail with FA2_TOKEN_UNDEFINED
+        """
+        sc = sp.test_scenario("Edge Case: Invalid Token ID")
+        sc.h1("Edge Case: Invalid Token ID")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        # Mint token_id 0 to payer
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=1000, token=sp.variant("new", tok0_md))],
+            _sender=admin
+        )
+
+        # Try to transfer token_id 999 (doesn't exist)
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=999, amount=100)]
+            )],
+            _sender=payer,
+            _valid=False,
+            _exception="FA2_TOKEN_UNDEFINED"
+        )
+
+        sc.h2("Result: Invalid token ID rejected")
+
+
+    @sp.add_test()
+    def test_insufficient_balance():
+        """
+        Edge Case: Insufficient balance for payment
+        - User has some tokens but not enough for the payment
+        - Should fail with FA2_INSUFFICIENT_BALANCE
+        """
+        sc = sp.test_scenario("Edge Case: Insufficient Balance")
+        sc.h1("Edge Case: Insufficient Balance")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        # Mint only 50 tokens to payer
+        test_token.mint(
+            [sp.record(to_=payer.address, amount=50, token=sp.variant("new", tok0_md))],
+            _sender=admin
+        )
+
+        # Try to transfer 100 tokens (payer only has 50)
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=100)]
+            )],
+            _sender=payer,
+            _valid=False,
+            _exception="FA2_INSUFFICIENT_BALANCE"
+        )
+
+        sc.h2("Result: Insufficient balance rejected")
+
+
+    @sp.add_test()
+    def test_partial_swap_then_payment():
+        """
+        Edge Case: Partial swap - swap gets some tokens but not enough for full payment
+        - User needs 200 TEST for payment
+        - User swaps and gets 100 TEST
+        - Payment of 200 fails (insufficient balance)
+        - User must swap again or reduce payment
+        """
+        sc = sp.test_scenario("Edge Case: Partial Swap Then Payment")
+        sc.h1("Edge Case: Partial Swap - Need More Tokens")
+
+        admin = sp.test_account("admin")
+        payer = sp.test_account("payer")
+        payee = sp.test_account("payee")
+
+        tok0_md = fa2.make_metadata(name="TEST", decimals=0, symbol="TEST")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        swap_contract = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)
+        )
+        sc += swap_contract
+
+        # Fund swap contract
+        test_token.mint(
+            [sp.record(to_=swap_contract.address, amount=100000, token=sp.variant("new", tok0_md))],
+            _sender=admin
+        )
+
+        # Payer swaps 0.1 XTZ for 100 TEST
+        swap_contract.swap(_sender=payer, _amount=sp.mutez(100000))
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 100)
+
+        # Try to pay 200 TEST (but only have 100) - should fail
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=200)]
+            )],
+            _sender=payer,
+            _valid=False,
+            _exception="FA2_INSUFFICIENT_BALANCE"
+        )
+
+        # Payer swaps more to get enough
+        swap_contract.swap(_sender=payer, _amount=sp.mutez(100000))
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 200)
+
+        # Now payment succeeds
+        test_token.transfer(
+            [sp.record(
+                from_=payer.address,
+                txs=[sp.record(to_=payee.address, token_id=0, amount=200)]
+            )],
+            _sender=payer
+        )
+
+        sc.verify(_get_balance(test_token, sp.record(owner=payer.address, token_id=0)) == 0)
+        sc.verify(_get_balance(test_token, sp.record(owner=payee.address, token_id=0)) == 200)
+
+        sc.h2("Result: Multiple swaps then payment successful")
+
+
+    @sp.add_test()
+    def test_unauthorized_pause():
+        """
+        Edge Case: Non-admin tries to pause swap
+        - Only admin can pause
+        - Non-admin attempt should fail
+        """
+        sc = sp.test_scenario("Edge Case: Unauthorized Pause")
+        sc.h1("Edge Case: Unauthorized Pause Attempt")
+
+        admin = sp.test_account("admin")
+        attacker = sp.test_account("attacker")
+
+        test_token = token_module.TestToken(
+            admin_address=admin.address,
+            contract_metadata=sp.big_map(),
+            ledger={},
+            token_metadata=[]
+        )
+        sc += test_token
+
+        swap_contract = swap_module.TestSwap(
+            admin=admin.address,
+            test_token_address=test_token.address,
+            rate=sp.nat(1000)
+        )
+        sc += swap_contract
+
+        # Non-admin tries to pause - should fail
+        swap_contract.pause(
+            True,
+            _sender=attacker,
+            _valid=False,
+            _exception="Not admin"
+        )
+
+        sc.h2("Result: Unauthorized pause rejected")
